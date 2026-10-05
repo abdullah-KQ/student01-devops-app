@@ -7,3 +7,5 @@ Student: student01
  
 
 This project is used for Git and DevOps labs.
+
+Jenkins lab 2 completed 
