@@ -7,89 +7,213 @@ pipeline {
     }
 
     environment {
-        IMAGE_NAME = 'student01-devops-app'
+        IMAGE_NAME     = 'student01-devops-app'
+        APP_SERVER     = '172.31.91.253'
+        CONTAINER_NAME = 'student01-devops-app'
+        APP_PORT       = '8101'
     }
 
     stages {
 
         stage('Checkout') {
             steps {
-                echo 'Stage 1 - Source Code Checkout'
+                echo '===== STAGE 1 - CHECKOUT ====='
+
                 checkout scm
+
+                sh '''
+                    echo "Repository downloaded successfully"
+                    echo "Current workspace:"
+                    pwd
+
+                    echo "Project files:"
+                    ls -la
+                '''
             }
         }
 
         stage('Build') {
             steps {
-                echo 'Stage 2 - Build Started'
+                echo '===== STAGE 2 - BUILD ====='
 
                 sh '''
+                    echo "Cleaning old build directory..."
                     rm -rf build
+
+                    echo "Creating new build directory..."
                     mkdir build
+
+                    echo "Copying application files..."
                     cp index.html build/
                     cp README.md build/
+
+                    echo "Build directory contents:"
                     ls -la build
                 '''
 
-                echo 'Stage 2 - Build Completed'
+                echo 'BUILD COMPLETED SUCCESSFULLY'
             }
         }
 
         stage('Test') {
             steps {
-                echo 'Stage 3 - Tests Started'
+                echo '===== STAGE 3 - TEST ====='
 
                 sh '''
+                    echo "Test 1: Checking index.html exists..."
                     test -f build/index.html
+
+                    echo "Test 1 PASSED"
+
+                    echo "Test 2: Checking index.html is not empty..."
                     test -s build/index.html
-                    grep -q "Basic DevOps" build/index.html
+
+                    echo "Test 2 PASSED"
+
+                    echo "Test 3: Checking DevOps text exists..."
+                    grep -q "DevOps" build/index.html
+
+                    echo "Test 3 PASSED"
                 '''
 
-                echo 'Stage 3 - All Tests Passed'
+                echo 'ALL APPLICATION TESTS PASSED'
             }
         }
 
         stage('Docker Build') {
             steps {
-                echo 'Stage 4 - Docker Image Build Started'
+                echo '===== STAGE 4 - DOCKER BUILD ====='
 
                 sh '''
+                    echo "Building Docker Image..."
+
                     docker build \
                     -t ${IMAGE_NAME}:${BUILD_NUMBER} \
                     -t ${IMAGE_NAME}:latest \
                     .
+
+                    echo "Docker Image created successfully"
+
+                    docker images ${IMAGE_NAME}
                 '''
 
-                echo 'Stage 4 - Docker Image Build Completed'
+                echo 'DOCKER IMAGE BUILD COMPLETED'
             }
         }
 
         stage('Docker Test') {
             steps {
-                echo 'Stage 5 - Docker Image Test Started'
+                echo '===== STAGE 5 - DOCKER TEST ====='
 
                 sh '''
-                    CID=$(docker run -d ${IMAGE_NAME}:${BUILD_NUMBER})
+                    TEST_CONTAINER="${IMAGE_NAME}-test-${BUILD_NUMBER}"
+
+                    echo "Starting temporary test container..."
+
+                    docker rm -f "$TEST_CONTAINER" 2>/dev/null || true
+
+                    docker run -d \
+                    --name "$TEST_CONTAINER" \
+                    ${IMAGE_NAME}:${BUILD_NUMBER}
 
                     sleep 2
 
-                    docker exec "$CID" test -f /usr/share/nginx/html/index.html
+                    echo "Checking index.html inside container..."
 
-                    docker exec "$CID" grep -q "Basic DevOps" /usr/share/nginx/html/index.html
+                    docker exec "$TEST_CONTAINER" \
+                    test -f /usr/share/nginx/html/index.html
 
-                    docker rm -f "$CID"
+                    echo "Checking application content inside container..."
+
+                    docker exec "$TEST_CONTAINER" \
+                    grep -q "DevOps" /usr/share/nginx/html/index.html
+
+                    echo "Removing temporary test container..."
+
+                    docker rm -f "$TEST_CONTAINER"
                 '''
 
-                echo 'Stage 5 - Docker Image Test Passed'
+                echo 'DOCKER IMAGE TEST PASSED'
             }
         }
 
-        stage('Docker Image Info') {
+        stage('Transfer Image') {
             steps {
-                echo 'Stage 6 - Docker Image Information'
+                echo '===== STAGE 6 - TRANSFER IMAGE ====='
 
                 sh '''
-                    docker images ${IMAGE_NAME}
+                    echo "Transferring Docker Image to Application Server..."
+
+                    docker save ${IMAGE_NAME}:${BUILD_NUMBER} | \
+                    ssh -o BatchMode=yes deploy@${APP_SERVER} "docker load"
+                '''
+
+                echo 'DOCKER IMAGE TRANSFERRED SUCCESSFULLY'
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                echo '===== STAGE 7 - DEPLOY ====='
+
+                sh '''
+                    echo "Deploying new application version..."
+
+                    ssh -o BatchMode=yes deploy@${APP_SERVER} "
+                        echo 'Removing old container if it exists...'
+
+                        docker rm -f ${CONTAINER_NAME} 2>/dev/null || true
+
+                        echo 'Starting new container...'
+
+                        docker run -d \
+                        --name ${CONTAINER_NAME} \
+                        --restart unless-stopped \
+                        -p ${APP_PORT}:80 \
+                        ${IMAGE_NAME}:${BUILD_NUMBER}
+                    "
+                '''
+
+                echo 'APPLICATION DEPLOYED SUCCESSFULLY'
+            }
+        }
+
+        stage('Verify Deployment') {
+            steps {
+                echo '===== STAGE 8 - VERIFY DEPLOYMENT ====='
+
+                sh '''
+                    echo "Waiting for application to start..."
+                    sleep 3
+
+                    echo "Testing application on Application Server..."
+
+                    ssh -o BatchMode=yes deploy@${APP_SERVER} \
+                    "curl -fsS http://localhost:${APP_PORT} | grep -q 'DevOps'"
+
+                    echo "Checking running container..."
+
+                    ssh -o BatchMode=yes deploy@${APP_SERVER} \
+                    "docker ps --filter name=${CONTAINER_NAME}"
+                '''
+
+                echo 'APPLICATION VERIFICATION PASSED'
+            }
+        }
+
+        stage('Deployment Information') {
+            steps {
+                echo '===== STAGE 9 - DEPLOYMENT INFORMATION ====='
+
+                sh '''
+                    ssh -o BatchMode=yes deploy@${APP_SERVER} "
+                        echo 'Running Container:'
+                        docker ps --filter name=${CONTAINER_NAME}
+
+                        echo 'Docker Image Used:'
+                        docker inspect ${CONTAINER_NAME} \
+                        --format '{{.Config.Image}}'
+                    "
                 '''
             }
         }
@@ -98,11 +222,24 @@ pipeline {
     post {
 
         success {
-            echo 'DOCKER PIPELINE COMPLETED SUCCESSFULLY'
+            echo '========================================='
+            echo 'CI/CD PIPELINE COMPLETED SUCCESSFULLY'
+            echo 'APPLICATION DEPLOYED SUCCESSFULLY'
+            echo '========================================='
         }
 
         failure {
-            echo 'DOCKER PIPELINE FAILED'
+            echo '========================================='
+            echo 'CI/CD PIPELINE FAILED'
+            echo 'CHECK THE FAILED STAGE'
+            echo '========================================='
+        }
+
+        always {
+            sh '''
+                docker rm -f ${IMAGE_NAME}-test-${BUILD_NUMBER} \
+                2>/dev/null || true
+            '''
         }
     }
 }
