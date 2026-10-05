@@ -1,0 +1,54 @@
+pipeline {
+
+    agent any
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                echo 'Stage 1 - Source Code Checkout'
+                checkout scm
+            }
+        }
+
+        stage('Build') {
+            steps {
+                echo 'Stage 2 - Build Started'
+
+                sh '''
+                    rm -rf build
+                    mkdir build
+                    cp index.html build/
+                    cp README.md build/
+                    ls -la build
+                '''
+
+                echo 'Stage 2 - Build Completed'
+            }
+        }
+
+        stage('Test') {
+            steps {
+                echo 'Stage 3 - Tests Started'
+
+                sh '''
+                    test -f build/index.html
+                    test -s build/index.html
+                    grep -q "Basic DevOps" build/index.html
+                '''
+
+                echo 'Stage 3 - All Tests Passed'
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'PIPELINE COMPLETED SUCCESSFULLY'
+        }
+
+        failure {
+            echo 'PIPELINE FAILED'
+        }
+    }
+}
