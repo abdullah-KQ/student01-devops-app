@@ -2,6 +2,14 @@ pipeline {
 
     agent any
 
+    options {
+        skipDefaultCheckout(true)
+    }
+
+    environment {
+        IMAGE_NAME = 'student01-devops-app'
+    }
+
     stages {
 
         stage('Checkout') {
@@ -40,15 +48,61 @@ pipeline {
                 echo 'Stage 3 - All Tests Passed'
             }
         }
+
+        stage('Docker Build') {
+            steps {
+                echo 'Stage 4 - Docker Image Build Started'
+
+                sh '''
+                    docker build \
+                    -t ${IMAGE_NAME}:${BUILD_NUMBER} \
+                    -t ${IMAGE_NAME}:latest \
+                    .
+                '''
+
+                echo 'Stage 4 - Docker Image Build Completed'
+            }
+        }
+
+        stage('Docker Test') {
+            steps {
+                echo 'Stage 5 - Docker Image Test Started'
+
+                sh '''
+                    CID=$(docker run -d ${IMAGE_NAME}:${BUILD_NUMBER})
+
+                    sleep 2
+
+                    docker exec "$CID" test -f /usr/share/nginx/html/index.html
+
+                    docker exec "$CID" grep -q "Basic DevOps" /usr/share/nginx/html/index.html
+
+                    docker rm -f "$CID"
+                '''
+
+                echo 'Stage 5 - Docker Image Test Passed'
+            }
+        }
+
+        stage('Docker Image Info') {
+            steps {
+                echo 'Stage 6 - Docker Image Information'
+
+                sh '''
+                    docker images ${IMAGE_NAME}
+                '''
+            }
+        }
     }
 
     post {
+
         success {
-            echo 'PIPELINE COMPLETED SUCCESSFULLY'
+            echo 'DOCKER PIPELINE COMPLETED SUCCESSFULLY'
         }
 
         failure {
-            echo 'PIPELINE FAILED'
+            echo 'DOCKER PIPELINE FAILED'
         }
     }
 }
